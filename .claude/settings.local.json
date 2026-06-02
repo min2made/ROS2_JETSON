@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ros2 service *)",
+      "Bash(ros2 topic *)",
+      "Bash(colcon build *)"
+    ]
+  }
+}

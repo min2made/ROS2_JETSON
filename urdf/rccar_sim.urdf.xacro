@@ -1,0 +1,239 @@
+<?xml version="1.0"?>
+<robot name="rccar_sim" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ====================================================
+       rccar_sim.urdf.xacro
+       Gazebo 확장 파일 — rccar.urdf.xacro 를 include 후
+       시뮬레이션 전용 플러그인/속성을 추가합니다.
+       ==================================================== -->
+
+  <!-- 1. 기반 파일 인클루드 -->
+  <xacro:include filename="rccar.urdf.xacro"/>
+
+
+  <!-- ====================================================
+       2. Gazebo 링크 색상 & 마찰 매크로
+       ==================================================== -->
+  <xacro:macro name="gz_body_props" params="link_name color mu1 mu2">
+    <gazebo reference="${link_name}">
+      <material>${color}</material>
+      <mu1>${mu1}</mu1>
+      <mu2>${mu2}</mu2>
+      <selfCollide>false</selfCollide>
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:gz_body_props link_name="base_link"
+                        color="Gazebo/Orange"
+                        mu1="0.5" mu2="0.5"/>
+  <xacro:gz_body_props link_name="front_left_wheel"
+                        color="Gazebo/DarkGrey"
+                        mu1="0.3" mu2="0.1"/>
+  <xacro:gz_body_props link_name="front_right_wheel"
+                        color="Gazebo/DarkGrey"
+                        mu1="0.3" mu2="0.1"/>
+  <xacro:gz_body_props link_name="rear_left_wheel"
+                        color="Gazebo/DarkGrey"
+                        mu1="0.3" mu2="0.1"/>
+  <xacro:gz_body_props link_name="rear_right_wheel"
+                        color="Gazebo/DarkGrey"
+                        mu1="0.3" mu2="0.1"/>
+
+  <!-- LiDAR 링크 색상 -->
+  <gazebo reference="lidar_link">
+    <material>Gazebo/Black</material>
+  </gazebo>
+
+
+  <!-- ====================================================
+       3. Joint State Publisher 플러그인
+       ==================================================== -->
+  <gazebo>
+    <plugin name="gazebo_ros_joint_state_publisher"
+            filename="libgazebo_ros_joint_state_publisher.so">
+      <ros>
+        <remapping>~/out:=joint_states</remapping>
+      </ros>
+      <update_rate>50</update_rate>
+      <joint_name>front_left_wheel_joint</joint_name>
+      <joint_name>front_right_wheel_joint</joint_name>
+      <joint_name>rear_left_wheel_joint</joint_name>
+      <joint_name>rear_right_wheel_joint</joint_name>
+    </plugin>
+  </gazebo>
+
+
+  <!-- ====================================================
+       4. 구동 플러그인 — Planar Move
+       ==================================================== -->
+  <gazebo>
+    <plugin name="gazebo_ros_planar_move"
+            filename="libgazebo_ros_planar_move.so">
+      <ros>
+        <remapping>cmd_vel:=cmd_vel</remapping>
+        <remapping>odom:=odom</remapping>
+      </ros>
+      <update_rate>50</update_rate>
+      <odometry_frame>odom</odometry_frame>
+      <robot_base_frame>base_footprint</robot_base_frame>
+      <covariance_x>0.002</covariance_x>
+      <covariance_y>0.002</covariance_y>
+      <covariance_yaw>0.01</covariance_yaw>
+      <publish_odom>true</publish_odom>
+      <publish_odom_tf>true</publish_odom_tf>
+    </plugin>
+  </gazebo>
+
+
+  <!-- ====================================================
+       5. 4방향 카메라 플러그인 매크로
+       ==================================================== -->
+  <xacro:macro name="gz_camera" params="name">
+    <gazebo reference="camera_${name}">
+      <sensor name="camera_${name}_sensor" type="camera">
+        <always_on>true</always_on>
+        <update_rate>30.0</update_rate>
+        <visualize>false</visualize>
+        <camera name="camera_${name}">
+          <horizontal_fov>1.5708</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.02</near>
+            <far>20.0</far>
+          </clip>
+          <distortion>
+            <k1>0.0</k1><k2>0.0</k2><k3>0.0</k3>
+            <p1>0.0</p1><p2>0.0</p2>
+            <center>0.5 0.5</center>
+          </distortion>
+        </camera>
+        <plugin name="camera_${name}_driver"
+                filename="libgazebo_ros_camera.so">
+          <ros>
+            <remapping>image_raw:=camera/${name}/image_raw</remapping>
+            <remapping>camera_info:=camera/${name}/camera_info</remapping>
+          </ros>
+          <camera_name>camera_${name}</camera_name>
+          <frame_name>camera_${name}_optical</frame_name>
+        </plugin>
+      </sensor>
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:gz_camera name="front"/>
+  <xacro:gz_camera name="rear"/>
+  <xacro:gz_camera name="left"/>
+  <xacro:gz_camera name="right"/>
+
+
+  <!-- ====================================================
+       6. IMU 센서 플러그인
+       ==================================================== -->
+  <gazebo reference="imu_link">
+    <sensor name="imu_sensor" type="imu">
+      <always_on>true</always_on>
+      <update_rate>200</update_rate>
+      <visualize>false</visualize>
+      <imu>
+        <linear_acceleration>
+          <x>
+            <noise type="gaussian">
+              <mean>0.0</mean><stddev>0.017</stddev>
+              <bias_mean>0.1</bias_mean><bias_stddev>0.001</bias_stddev>
+            </noise>
+          </x>
+          <y>
+            <noise type="gaussian">
+              <mean>0.0</mean><stddev>0.017</stddev>
+              <bias_mean>0.1</bias_mean><bias_stddev>0.001</bias_stddev>
+            </noise>
+          </y>
+          <z>
+            <noise type="gaussian">
+              <mean>0.0</mean><stddev>0.017</stddev>
+              <bias_mean>0.1</bias_mean><bias_stddev>0.001</bias_stddev>
+            </noise>
+          </z>
+        </linear_acceleration>
+        <angular_velocity>
+          <x>
+            <noise type="gaussian">
+              <mean>0.0</mean><stddev>0.005</stddev>
+              <bias_mean>0.0</bias_mean><bias_stddev>0.0005</bias_stddev>
+            </noise>
+          </x>
+          <y>
+            <noise type="gaussian">
+              <mean>0.0</mean><stddev>0.005</stddev>
+              <bias_mean>0.0</bias_mean><bias_stddev>0.0005</bias_stddev>
+            </noise>
+          </y>
+          <z>
+            <noise type="gaussian">
+              <mean>0.0</mean><stddev>0.005</stddev>
+              <bias_mean>0.0</bias_mean><bias_stddev>0.0005</bias_stddev>
+            </noise>
+          </z>
+        </angular_velocity>
+      </imu>
+      <plugin name="imu_driver"
+              filename="libgazebo_ros_imu_sensor.so">
+        <ros>
+          <remapping>~/out:=imu/data</remapping>
+        </ros>
+        <frame_name>imu_link</frame_name>
+        <initial_orientation_as_reference>false</initial_orientation_as_reference>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+
+  <!-- ====================================================
+       7. ▶ LiDAR (RPLIDAR) 센서 플러그인
+          높이: 몸체 상단 기준 +18cm (실물 동일)
+          지면 기준: 약 22.15cm
+          토픽: /scan  |  타입: sensor_msgs/LaserScan
+       ==================================================== -->
+  <gazebo reference="lidar_link">
+    <sensor name="lidar_sensor" type="ray">
+      <always_on>true</always_on>
+      <update_rate>10</update_rate>
+      <visualize>false</visualize>
+
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>360</samples>
+            <resolution>1</resolution>
+            <min_angle>-3.14159265</min_angle>
+            <max_angle> 3.14159265</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.12</min>
+          <max>12.0</max>
+          <resolution>0.01</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.01</stddev>
+        </noise>
+      </ray>
+
+      <plugin name="lidar_driver"
+              filename="libgazebo_ros_ray_sensor.so">
+        <ros>
+          <remapping>~/out:=scan</remapping>
+        </ros>
+        <output_type>sensor_msgs/LaserScan</output_type>
+        <frame_name>lidar_link</frame_name>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+</robot>

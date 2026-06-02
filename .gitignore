@@ -1,0 +1,40 @@
+# Build directories
+build/
+install/
+log/
+devel/
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ROS2/Gazebo
+*.bag
+*.dae
+*.sdf~
+gazebo_models/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# Environment files
+.env
+.env.local

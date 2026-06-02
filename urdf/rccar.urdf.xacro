@@ -1,0 +1,199 @@
+<?xml version="1.0"?>
+<robot name="rccar" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- body dimensions -->
+  <xacro:property name="body_l"  value="0.400"/>
+  <xacro:property name="body_w"  value="0.300"/>
+  <xacro:property name="body_h"  value="0.003"/>
+
+  <!-- wheel: 80mm mecanum (radius 40mm) -->
+  <xacro:property name="wheel_r" value="0.040"/>
+  <xacro:property name="wheel_w" value="0.040"/>
+
+  <!-- wb: front-rear wheel center distance -->
+  <!-- tw: left-right wheel center distance -->
+  <xacro:property name="wb"      value="0.400"/>
+  <xacro:property name="tw"      value="0.340"/>
+
+  <!-- camera mount -->
+  <xacro:property name="cam_h"   value="0.080"/>
+  <xacro:property name="cam_of"  value="0.015"/>
+
+  <!-- ▶ LiDAR: 몸체 상단으로부터 18cm 위 (실물 기준)
+       joint origin z = body_h/2 + 0.180
+       → base_link 기준 +0.1815 m
+       → 지면 기준 wheel_r + body_h/2 + 0.180 = 0.040 + 0.0015 + 0.180 = 0.2215 m -->
+  <xacro:property name="lidar_mount_z" value="0.180"/>
+
+  <!-- roller params -->
+  <xacro:property name="roller_r"     value="${wheel_r * 0.28}"/>
+  <xacro:property name="roller_l"     value="${wheel_w * 1.05}"/>
+  <xacro:property name="roller_pos_r" value="${wheel_r * 0.76}"/>
+
+  <!-- materials -->
+  <material name="dark_grey"><color rgba="0.15 0.15 0.15 1.0"/></material>
+  <material name="mid_grey"> <color rgba="0.40 0.40 0.40 1.0"/></material>
+  <material name="orange">   <color rgba="1.0  0.45 0.0  1.0"/></material>
+  <material name="blue">     <color rgba="0.2  0.4  0.8  1.0"/></material>
+  <material name="black">    <color rgba="0.05 0.05 0.05 1.0"/></material>
+
+  <!-- mecanum roller visual -->
+  <xacro:macro name="mecanum_roller" params="phi roller_sign">
+    <visual>
+      <geometry><cylinder radius="${roller_r}" length="${roller_l}"/></geometry>
+      <material name="mid_grey"/>
+      <origin xyz="${roller_pos_r * sin(phi)} 0 ${roller_pos_r * cos(phi)}"
+              rpy="${-roller_sign * pi/4} 0 0"/>
+    </visual>
+  </xacro:macro>
+
+  <!-- mecanum wheel macro -->
+  <xacro:macro name="wheel" params="name x y roller_sign">
+    <link name="${name}_wheel">
+      <visual>
+        <geometry><cylinder radius="${wheel_r * 0.28}" length="${wheel_w * 1.1}"/></geometry>
+        <material name="dark_grey"/>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+      </visual>
+      <visual>
+        <geometry><cylinder radius="${wheel_r * 0.90}" length="${wheel_w * 0.07}"/></geometry>
+        <material name="dark_grey"/>
+        <origin xyz="0 ${wheel_w * 0.50} 0" rpy="${pi/2} 0 0"/>
+      </visual>
+      <visual>
+        <geometry><cylinder radius="${wheel_r * 0.90}" length="${wheel_w * 0.07}"/></geometry>
+        <material name="dark_grey"/>
+        <origin xyz="0 ${-wheel_w * 0.50} 0" rpy="${pi/2} 0 0"/>
+      </visual>
+      <xacro:mecanum_roller phi="${0}"        roller_sign="${roller_sign}"/>
+      <xacro:mecanum_roller phi="${2*pi/9}"   roller_sign="${roller_sign}"/>
+      <xacro:mecanum_roller phi="${4*pi/9}"   roller_sign="${roller_sign}"/>
+      <xacro:mecanum_roller phi="${6*pi/9}"   roller_sign="${roller_sign}"/>
+      <xacro:mecanum_roller phi="${8*pi/9}"   roller_sign="${roller_sign}"/>
+      <xacro:mecanum_roller phi="${10*pi/9}"  roller_sign="${roller_sign}"/>
+      <xacro:mecanum_roller phi="${12*pi/9}"  roller_sign="${roller_sign}"/>
+      <xacro:mecanum_roller phi="${14*pi/9}"  roller_sign="${roller_sign}"/>
+      <xacro:mecanum_roller phi="${16*pi/9}"  roller_sign="${roller_sign}"/>
+      <collision>
+        <geometry><cylinder radius="${wheel_r}" length="${wheel_w}"/></geometry>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+      </collision>
+      <inertial>
+        <mass value="0.15"/>
+        <inertia ixx="0.0002" ixy="0" ixz="0" iyy="0.0002" iyz="0" izz="0.0003"/>
+      </inertial>
+    </link>
+    <joint name="${name}_wheel_joint" type="continuous">
+      <parent link="base_link"/>
+      <child  link="${name}_wheel"/>
+      <origin xyz="${x} ${y} ${-wheel_r}" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- camera frame macro -->
+  <xacro:macro name="camera_frame" params="name x y yaw">
+    <link name="camera_${name}">
+      <visual>
+        <geometry><box size="0.030 0.030 0.020"/></geometry>
+        <material name="blue"/>
+      </visual>
+    </link>
+    <joint name="camera_${name}_joint" type="fixed">
+      <parent link="base_link"/>
+      <child  link="camera_${name}"/>
+      <origin xyz="${x} ${y} ${body_h/2 + cam_h}" rpy="0 0 ${yaw}"/>
+    </joint>
+    <link name="camera_${name}_optical"/>
+    <joint name="camera_${name}_optical_joint" type="fixed">
+      <parent link="camera_${name}"/>
+      <child  link="camera_${name}_optical"/>
+      <origin xyz="0 0 0" rpy="${-pi/2} 0 ${-pi/2}"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- base_footprint -->
+  <link name="base_footprint"/>
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child  link="base_link"/>
+    <origin xyz="0 0 ${wheel_r + 0.02}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- body -->
+  <link name="base_link">
+    <visual>
+      <geometry><box size="${body_l} ${body_w} ${body_h}"/></geometry>
+      <material name="orange"/>
+    </visual>
+    <collision>
+      <geometry><box size="${body_l} ${body_w} ${body_h}"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="1.8"/>
+      <inertia ixx="0.012" ixy="0" ixz="0" iyy="0.008" iyz="0" izz="0.018"/>
+    </inertial>
+  </link>
+
+  <!-- 4 mecanum wheels -->
+  <xacro:wheel name="front_left"  x="${wb/2}"  y="${tw/2}"  roller_sign="1"/>
+  <xacro:wheel name="front_right" x="${wb/2}"  y="${-tw/2}" roller_sign="-1"/>
+  <xacro:wheel name="rear_left"   x="${-wb/2}" y="${tw/2}"  roller_sign="-1"/>
+  <xacro:wheel name="rear_right"  x="${-wb/2}" y="${-tw/2}" roller_sign="1"/>
+
+  <!-- cameras at 4 sides -->
+  <xacro:camera_frame name="front" x="${body_l/2 + cam_of}"   y="0"                     yaw="0"/>
+  <xacro:camera_frame name="rear"  x="${-body_l/2 - cam_of}"  y="0"                     yaw="${pi}"/>
+  <xacro:camera_frame name="left"  x="0"                      y="${body_w/2 + cam_of}"  yaw="${pi/2}"/>
+  <xacro:camera_frame name="right" x="0"                      y="${-body_w/2 - cam_of}" yaw="${-pi/2}"/>
+
+  <!-- IMU -->
+  <link name="imu_link"/>
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child  link="imu_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ============================================================
+       ▶ LiDAR (RPLIDAR) — 정중앙, 몸체 상단으로부터 정확히 18cm 위
+
+       좌표 정리 (base_link 원점 기준):
+         z = body_h/2 + 0.180
+           = 0.0015 + 0.180 = 0.1815 m  (base_link 기준)
+
+       지면 기준 높이:
+         wheel_r + 0.1815 = 0.040 + 0.1815 = 0.2215 m (약 22cm)
+       ============================================================ -->
+  <link name="lidar_link">
+    <visual>
+      <!-- RPLIDAR A1/A2 외형 모사: φ70mm × h40mm -->
+      <geometry>
+        <cylinder radius="0.035" length="0.040"/>
+      </geometry>
+      <material name="black"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="0.035" length="0.040"/>
+      </geometry>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </collision>
+    <inertial>
+      <mass value="0.17"/>
+      <!-- I_xx = I_yy = 1/12 * m * (3r² + h²), I_zz = 1/2 * m * r² -->
+      <inertia ixx="0.000057" ixy="0" ixz="0"
+               iyy="0.000057" iyz="0"
+               izz="0.000104"/>
+    </inertial>
+  </link>
+
+  <joint name="lidar_joint" type="fixed">
+    <parent link="base_link"/>
+    <child  link="lidar_link"/>
+    <!-- 몸체 상단(body_h/2)에서 정확히 18cm(lidar_mount_z) 위 -->
+    <origin xyz="0 0 ${body_h/2 + lidar_mount_z}" rpy="0 0 0"/>
+  </joint>
+
+</robot>
