@@ -28,7 +28,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPo
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry
-from gazebo_msgs.srv import SetEntityState
+from gazebo_msgs.srv import SetEntityState, SpawnEntity
 from gazebo_msgs.msg import EntityState
 from std_srvs.srv import Empty
 from geometry_msgs.msg import Pose, Point, Quaternion
@@ -69,6 +69,52 @@ SAFE_ZONES = [
     (-1.0,  1.0,  3.0,  5.0),   # 상단 공간
     (-1.0,  1.0, -5.0, -3.0),   # 하단 공간
 ]
+
+# 데스크 제외 영역 (cx, cy, half_x, half_y)
+# world 파일 확인 결과: 중심이 SAFE_ZONE 안에 있는 데스크들
+DESK_EXCLUSIONS = [
+    ( 1.01,  5.03, 1.5, 1.5),   # InfoDesk     — 상단 공간 겹침
+    (-2.37,  0.84, 1.5, 1.5),   # DeskA_002    — 좌측 개방구역 중심
+    (-0.70, -4.05, 1.5, 1.5),   # DeskA_004    — 하단 공간 중심
+    ( 2.30,  0.86, 1.5, 1.5),   # DeskA_005    — 우측 개방구역 중심
+]
+
+# ── Gazebo 시각화 마커 SDF ─────────────────────────────────────
+# 목표: 녹색 구 (반경 = GOAL_RADIUS)
+_GOAL_MARKER_SDF = """\
+<sdf version="1.6">
+  <model name="goal_marker">
+    <static>true</static>
+    <link name="link">
+      <visual name="visual">
+        <geometry><sphere><radius>0.20</radius></sphere></geometry>
+        <material>
+          <ambient>0 1 0 1</ambient>
+          <diffuse>0 1 0 1</diffuse>
+          <emissive>0 0.5 0 1</emissive>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>"""
+
+# 출발점: 주황색 기둥 (에피소드마다 업데이트)
+_SPAWN_MARKER_SDF = """\
+<sdf version="1.6">
+  <model name="spawn_marker">
+    <static>true</static>
+    <link name="link">
+      <visual name="visual">
+        <geometry><cylinder><radius>0.07</radius><length>0.50</length></cylinder></geometry>
+        <material>
+          <ambient>1 0.5 0 1</ambient>
+          <diffuse>1 0.5 0 1</diffuse>
+          <emissive>0.6 0.3 0 1</emissive>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>"""
 
 
 # ──────────────────────────────────────────────────────────────
@@ -131,6 +177,10 @@ class RobotSensorNode(Node):
             SetEntityState, '/gazebo/set_entity_state',
             callback_group=self.service_cb_group,
         )
+        self.cli_spawn_entity = self.create_client(
+            SpawnEntity, '/spawn_entity',
+            callback_group=self.service_cb_group,
+        )
 
         # ── 공유 상태 (스레드 락 보호) ──────────────────────
         self._lock       = threading.Lock()
@@ -143,7 +193,8 @@ class RobotSensorNode(Node):
         self._vel_wz     = 0.0
         self._scan_ready = False
         self._odom_ready = False
-        self._scan_seq   = 0   # 스캔 수신 카운터 (신선도 확인용)
+        self._scan_seq       = 0      # 스캔 수신 카운터 (신선도 확인용)
+        self._markers_spawned = False  # Gazebo 시각화 마커 스폰 여부
 
     # ── 콜백 ──────────────────────────────────────────────────
     def _cb_scan(self, msg: LaserScan):
@@ -218,6 +269,60 @@ class RobotSensorNode(Node):
     def stop_robot(self):
         self.publish_cmd(0.0, 0.0, 0.0)
 
+    # ── 시각화 마커 ──────────────────────────────────────────
+    def ensure_markers_spawned(self):
+        """목표(녹색 구)와 출발점(주황색 기둥) 마커를 최초 1회 스폰."""
+        if self._markers_spawned:
+            return
+        for name, sdf in [('goal_marker', _GOAL_MARKER_SDF),
+                           ('spawn_marker', _SPAWN_MARKER_SDF)]:
+            self._spawn_marker(name, sdf)
+        self._markers_spawned = True
+
+    def _spawn_marker(self, name: str, sdf: str):
+        if not self.cli_spawn_entity.service_is_ready():
+            self.get_logger().warn(f'spawn_entity 미준비 — {name} 스폰 생략')
+            return
+        req = SpawnEntity.Request()
+        req.name = name
+        req.xml  = sdf
+        req.initial_pose = Pose(
+            position=Point(x=0.0, y=0.0, z=-5.0),  # 초기 위치: 맵 아래(숨김)
+            orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        )
+        done_event = threading.Event()
+        def _cb(future):
+            try:
+                res = future.result()
+                if not res.success:
+                    self.get_logger().warn(f'{name} 스폰 실패: {res.status_message}')
+            except Exception as e:
+                self.get_logger().error(f'{name} 스폰 오류: {e}')
+            done_event.set()
+        self.cli_spawn_entity.call_async(req).add_done_callback(_cb)
+        done_event.wait(timeout=5.0)
+
+    def update_goal_marker(self, x: float, y: float):
+        self._move_marker('goal_marker', x, y, z=0.70)   # 로봇 최고점(0.24m) 위로 띄움
+
+    def update_spawn_marker(self, x: float, y: float):
+        self._move_marker('spawn_marker', x, y, z=0.50)  # 기둥 중심 — 0.25~0.75m 구간
+
+    def _move_marker(self, name: str, x: float, y: float, z: float):
+        """SetEntityState로 마커 위치 이동 (fire-and-forget)."""
+        if not self.cli_set_entity.service_is_ready():
+            return
+        state = EntityState()
+        state.name = name
+        state.pose = Pose(
+            position=Point(x=x, y=y, z=z),
+            orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        )
+        state.twist = Twist()
+        req = SetEntityState.Request()
+        req.state = state
+        self.cli_set_entity.call_async(req)  # 응답 대기 없이 전송
+
     # ── Gazebo 서비스 ─────────────────────────────────────────
     def set_robot_pose(self, x: float, y: float, yaw: float, timeout: float = 5.0) -> bool:
         """로봇 위치를 Gazebo 서비스로 즉시 재배치."""
@@ -267,12 +372,31 @@ def _yaw_to_quaternion(yaw: float) -> Tuple[float, float, float, float]:
 
 
 def _sample_safe_pose(rng: np.random.Generator) -> Tuple[float, float, float]:
-    """안전 구역에서 무작위 (x, y, yaw) 샘플링."""
-    zone = SAFE_ZONES[rng.integers(0, len(SAFE_ZONES))]
-    x   = rng.uniform(zone[0], zone[1])
-    y   = rng.uniform(zone[2], zone[3])
+    """안전 구역에서 무작위 (x, y, yaw) 샘플링. 데스크 영역 제외."""
+    for _ in range(50):
+        zone = SAFE_ZONES[rng.integers(0, len(SAFE_ZONES))]
+        x   = rng.uniform(zone[0], zone[1])
+        y   = rng.uniform(zone[2], zone[3])
+        if not any(abs(x - cx) < hx and abs(y - cy) < hy
+                   for cx, cy, hx, hy in DESK_EXCLUSIONS):
+            break
     yaw = rng.uniform(-math.pi, math.pi)
     return x, y, yaw
+
+
+def _sample_near_pose(
+    rng: np.random.Generator,
+    cx: float, cy: float,
+    max_dist: float,
+    min_dist: float = 0.8,
+) -> Tuple[float, float, float]:
+    """중심점(cx, cy)에서 [min_dist, max_dist] 반경 내 랜덤 위치 샘플링.
+    장애물 여부는 호출자가 LiDAR로 검증한다.
+    """
+    angle = rng.uniform(-math.pi, math.pi)
+    dist  = rng.uniform(min_dist, max(min_dist + 0.01, max_dist))
+    yaw   = rng.uniform(-math.pi, math.pi)
+    return cx + dist * math.cos(angle), cy + dist * math.sin(angle), yaw
 
 
 def _goal_obs(robot_x, robot_y, robot_yaw, goal_x, goal_y) -> np.ndarray:
@@ -353,7 +477,8 @@ class GazeboRoomEnv(gym.Env):
         self._step_count: int = 0
         self._prev_dist: float = 0.0
         self._episode_count: int = 0
-        
+        self.curriculum_max_dist: Optional[float] = None  # CurriculumCallback이 학습 진행에 따라 주입
+
     # ── 핵심 메서드 ───────────────────────────────────────────
     def reset(
         self,
@@ -370,34 +495,66 @@ class GazeboRoomEnv(gym.Env):
         self._step_count    = 0
         self.node.stop_robot()
 
-        # ── 스폰 위치 검증 루프 ───────────────────────────
-        # 가구/벽 안에 스폰되면 즉시 충돌 판정 → 의미없는 에피소드 반복 방지
-        SPAWN_MIN_CLEARANCE = COLLISION_DIST * 2.0   # 0.5m 여유
+        SPAWN_MIN_CLEARANCE = COLLISION_DIST * 2.0
         MAX_SPAWN_ATTEMPTS  = 8
 
+        # ── 목표 위치 샘플 + LiDAR 검증 ──────────────────────
+        # 로봇을 목표 후보지로 텔포 → LiDAR로 장애물 여부 확인
+        goal_x, goal_y = _sample_safe_pose(self.rng)[:2]  # fallback
+
         for attempt in range(MAX_SPAWN_ATTEMPTS):
-            robot_x, robot_y, robot_yaw = _sample_safe_pose(self.rng)
-            ok = self.node.set_robot_pose(robot_x, robot_y, robot_yaw)
+            gx, gy, _ = _sample_safe_pose(self.rng)
+            ok = self.node.set_robot_pose(gx, gy, 0.0)
             if not ok:
                 continue
-            # 텔포 후 새 스캔이 도착할 때까지 대기 (stale 스캔 방지)
             self.node.wait_fresh_scan(timeout=1.0)
             if np.min(self.node.get_scan()) >= SPAWN_MIN_CLEARANCE:
-                break          # 유효한 스폰 위치 확보
+                goal_x, goal_y = gx, gy
+                break
+            if attempt < MAX_SPAWN_ATTEMPTS - 1:
+                self.node.get_logger().warn(
+                    f'[reset] 목표 위치 장애물, 재샘플 {attempt + 1}/{MAX_SPAWN_ATTEMPTS}'
+                )
+
+        self._goal_x, self._goal_y = goal_x, goal_y
+
+        # ── 로봇 스폰 위치 샘플 + LiDAR 검증 ────────────────
+        robot_x, robot_y, robot_yaw = _sample_safe_pose(self.rng)  # fallback
+
+        for attempt in range(MAX_SPAWN_ATTEMPTS):
+            if self.curriculum_max_dist is not None:
+                # 커리큘럼 모드: 목표 근처 극좌표 샘플
+                rx, ry, ryaw = _sample_near_pose(
+                    self.rng, goal_x, goal_y,
+                    max_dist=self.curriculum_max_dist,
+                    min_dist=max(GOAL_RADIUS * 2, 0.8),
+                )
+            else:
+                # 전체 랜덤: 안전구역에서 샘플, 목표와 최소 2m 거리 확보
+                for _ in range(20):
+                    rx, ry, ryaw = _sample_safe_pose(self.rng)
+                    if math.hypot(rx - goal_x, ry - goal_y) >= 2.0:
+                        break
+
+            ok = self.node.set_robot_pose(rx, ry, ryaw)
+            if not ok:
+                continue
+            self.node.wait_fresh_scan(timeout=1.0)
+            if np.min(self.node.get_scan()) >= SPAWN_MIN_CLEARANCE:
+                robot_x, robot_y, robot_yaw = rx, ry, ryaw
+                break
             if attempt < MAX_SPAWN_ATTEMPTS - 1:
                 self.node.get_logger().warn(
                     f'[reset] 스폰 위치 장애물 충돌, 재시도 {attempt + 1}/{MAX_SPAWN_ATTEMPTS}'
                 )
 
-        # ── 목적지 샘플링 (로봇과 최소 2m 이상 떨어진 곳) ─
-        for _ in range(50):
-            gx, gy, _ = _sample_safe_pose(self.rng)
-            if math.hypot(gx - robot_x, gy - robot_y) >= 2.0:
-                break
-        self._goal_x, self._goal_y = gx, gy
-
-        # 추가 물리 안정화
+        # 물리 안정화
         time.sleep(0.1)
+
+        # ── Gazebo 시각화 마커 업데이트 ───────────────────
+        self.node.ensure_markers_spawned()
+        self.node.update_spawn_marker(robot_x, robot_y)
+        self.node.update_goal_marker(goal_x, goal_y)
 
         # ── 초기 거리 기록 ────────────────────────────────
         obs = self._get_obs()
@@ -407,9 +564,10 @@ class GazeboRoomEnv(gym.Env):
         )
 
         info = {
-            'robot_pos' : (robot_x, robot_y, robot_yaw),
-            'goal_pos'  : (self._goal_x, self._goal_y),
-            'episode'   : self._episode_count,
+            'robot_pos'           : (robot_x, robot_y, robot_yaw),
+            'goal_pos'            : (self._goal_x, self._goal_y),
+            'episode'             : self._episode_count,
+            'curriculum_max_dist' : self.curriculum_max_dist,
         }
         return obs, info
 
@@ -525,7 +683,9 @@ class GazeboRoomEnv(gym.Env):
         dist_delta = self._prev_dist - dist_to_goal
         reward += dist_delta * 2.0   # 1cm 접근 = +0.02
 
-        # 4) 헤딩 정렬 보상 ───────────────────────────────────
+        # 4) 헤딩 정렬 보상 (속도 비례) ──────────────────────────
+        # 멈춰서 목표 방향만 보는 보상 해킹 방지:
+        # 이동 중일 때만 heading 보상 → 서 있으면 0
         angle_to_goal = math.atan2(
             self._goal_y - ry, self._goal_x - rx
         )
@@ -533,26 +693,23 @@ class GazeboRoomEnv(gym.Env):
             math.sin(angle_to_goal - ryaw),
             math.cos(angle_to_goal - ryaw),
         )
-        # cos: 정면 정렬 시 1, 반대 방향 시 -1
-        heading_reward = math.cos(rel_heading) * R_HEADING_SCALE
+        linear_speed = math.hypot(vx, vy)
+        speed_ratio  = min(linear_speed / VX_MAX, 1.0)
+        heading_reward = math.cos(rel_heading) * R_HEADING_SCALE * speed_ratio
         reward += heading_reward
 
         # 5) 통로 중앙 정렬 보상 ──────────────────────────────
-        # 좌측(90°) ↔ 우측(270°) 거리 균형
         left_d  = float(scan[90])    # 로봇 왼쪽
         right_d = float(scan[270])   # 로봇 오른쪽
 
-        # 좌우 균형 (통로 중앙에 있을수록 0에 가까움)
         balance = abs(left_d - right_d)
-        # 통로 폭이 좁을 때만 보상 (좁은 책장 통로 통과 유도)
         if (left_d + right_d) < 2.0:
             center_reward = max(0.0, R_CENTER_SCALE - balance * 0.1)
             reward += center_reward
 
         # 6) 제자리 회전 페널티 ───────────────────────────────
-        # |wz| 크고 |vx|+|vy| 작을 때 페널티
-        linear_speed = math.hypot(vx, vy)
-        if abs(wz) > 0.3 and linear_speed < 0.05:
+        # wz 임계값을 0.1로 낮춰 느린 회전 해킹도 차단
+        if abs(wz) > 0.1 and linear_speed < 0.05:
             reward += R_SPIN_PENALTY
 
         # 7) 장애물 근접 경고 (선형 페널티) ──────────────────

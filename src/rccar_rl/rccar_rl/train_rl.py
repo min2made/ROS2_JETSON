@@ -129,11 +129,11 @@ PPO_KWARGS = dict(
     gamma               = 0.99,
     gae_lambda          = 0.95,
     clip_range          = 0.2,
-    ent_coef            = 0.01,       # 탐험 장려
+    ent_coef            = 0.05,       # 탐험 장려 (0.01→0.05: 후반 entropy collapse 방지)
     vf_coef             = 0.5,
     max_grad_norm       = 0.5,
     use_sde             = True,       # 에피소드 내 일관된 방향성 탐험 (덜덜떨기 방지)
-    sde_sample_freq     = 64,         # 64스텝마다 노이즈 갱신
+    sde_sample_freq     = 16,         # 16스텝마다 노이즈 갱신 (64→16: 더 다양한 방향 탐험)
     tensorboard_log     = LOG_DIR,
     verbose             = 1,
     policy_kwargs       = dict(
@@ -182,6 +182,41 @@ class EpisodeLogCallback(BaseCallback):
                         f"collision={self.results['collision']} "
                         f"timeout={self.results['timeout']}"
                     )
+        return True
+
+
+# ──────────────────────────────────────────────────────────────
+# 커리큘럼 콜백
+# ──────────────────────────────────────────────────────────────
+class CurriculumCallback(BaseCallback):
+    """학습 진행에 따라 목표~스폰 최대 거리 자동 조정.
+
+    Phase 1A (0~500K):   목표 2m 이내 스폰 → goal-reaching 기초 학습
+    Phase 1B (500K~1M):  목표 5m 이내 스폰 → 중거리 탐색 확장
+    Phase 1C (1M~):      전체 맵 랜덤      → 실전 수준 (원래 방식)
+    """
+
+    SCHEDULE = [
+        (        0,   500_000, 2.0),
+        (  500_000, 1_000_000, 5.0),
+        (1_000_000,      None, None),
+    ]
+
+    def __init__(self, gym_env, verbose=0):
+        super().__init__(verbose)
+        self.gym_env = gym_env
+        self._last_stage = -1
+
+    def _on_step(self) -> bool:
+        ts = self.num_timesteps
+        for i, (start, end, dist) in enumerate(self.SCHEDULE):
+            if end is None or ts < end:
+                if i != self._last_stage:
+                    self.gym_env.curriculum_max_dist = dist
+                    self._last_stage = i
+                    label = f'≤ {dist}m' if dist is not None else '전체 맵'
+                    print(f'\n[Curriculum] 스텝 {ts:,} → 스폰 거리 {label}\n')
+                break
         return True
 
 
@@ -318,10 +353,15 @@ def main():
 
     episode_log_cb = EpisodeLogCallback()
 
+    # 커리큘럼 콜백: VecNormalize → DummyVecEnv → Monitor → GazeboRoomEnv
+    gym_env = env.venv.envs[0].env
+    curriculum_cb = CurriculumCallback(gym_env)
+
     callback_list = CallbackList([
         checkpoint_cb,
         eval_cb,
         episode_log_cb,
+        curriculum_cb,
     ])
 
     # ── 학습 시작 ──────────────────────────────────────────

@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(colcon build*)",
+      "Bash(colcon build --packages-select*)",
+      "Bash(make*)",
+      "Bash(ros2 service list*)",
+      "Bash(ros2 topic list*)",
+      "Bash(ros2 node list*)",
+      "Bash(ros2 service type*)",
+      "Bash(find /home/work/project/ROS2_JETSON*)",
+      "Bash(grep*)",
+      "Bash(ls*)",
+      "Bash(cat /home/work/project/ROS2_JETSON*)",
+      "Bash(echo*)",
+      "Bash(mkdir -p ~/rl_training*)",
+      "Bash(rm -rf ~/rl_training*)",
+      "Bash(python3 test_service.py)",
+      "Bash(source install/setup.bash*)"
+    ]
+  }
+}

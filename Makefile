@@ -207,7 +207,7 @@ rl-monitor:
 	@echo "$(YELLOW)Monitoring started. Refresh dashboards in browser.$(NC)"
 	@echo "$(YELLOW)Training files: ~/rl_training/$(NC)"
 	@echo ""
-	@bash -c 'python3 -m rccar_rl.monitor_training --port 8765 --tensorboard-port 6006'
+	@bash -c 'source $(INSTALL_DIR)/setup.bash && python3 -m rccar_rl.monitor_training --port 8765 --tensorboard-port 6006'
 
 # Interactive RL UI menu
 rl-ui:

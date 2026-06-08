@@ -35,7 +35,18 @@ class TrainingStatsCollector:
 
     def __init__(self, log_dir):
         self.log_dir = log_dir
-        self.monitor_file = os.path.join(log_dir, 'monitor.csv')
+        self.monitor_file = self._find_monitor_file(log_dir)
+
+    def _find_monitor_file(self, log_dir):
+        """가장 최근에 수정된 .monitor.csv 파일 탐색."""
+        if not os.path.exists(log_dir):
+            return None
+        candidates = sorted(
+            [os.path.join(log_dir, f) for f in os.listdir(log_dir)
+             if f.endswith('.monitor.csv')],
+            key=os.path.getmtime,
+        )
+        return candidates[-1] if candidates else None
 
     def get_latest_stats(self):
         """최신 학습 통계 반환"""
@@ -65,7 +76,7 @@ class TrainingStatsCollector:
 
     def _get_monitor_stats(self):
         """Monitor CSV 파일에서 에피소드 통계"""
-        if not os.path.exists(self.monitor_file):
+        if not self.monitor_file or not os.path.exists(self.monitor_file):
             return None
 
         try:

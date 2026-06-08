@@ -3,7 +3,8 @@
     "allow": [
       "Bash(ros2 service *)",
       "Bash(ros2 topic *)",
-      "Bash(colcon build *)"
+      "Bash(colcon build *)",
+      "Bash(python3)"
     ]
   }
 }
